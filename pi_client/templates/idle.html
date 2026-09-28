@@ -83,7 +83,6 @@
 
 {% block content %}
 <div class="d-flex flex-column flex-fill h-100 w-100 overflow-hidden">
-    {% if upcoming_events or most_wanted or calendars %}
     <!-- Dashboard Area (Calendar + Most Wanted) -->
     <div class="flex-fill p-3 p-md-4 overflow-hidden d-flex flex-column">
         <div class="row g-3 g-md-4 h-100 flex-fill overflow-hidden justify-content-center align-items-stretch">
@@ -278,20 +277,6 @@
             </span>
         </div>
     </div>
-
-    {% else %}
-    <!-- No Calendars & No Debtors -> Show Original Big NFC Screen -->
-    <div class="d-flex flex-column align-items-center justify-content-center h-100 text-center p-4">
-        <div class="nfc-icon-wrapper mb-4" style="width: 100px; height: 100px; border-radius: 24px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" fill="currentColor" class="bi bi-credit-card-2-front" viewBox="0 0 16 16">
-              <path d="M14 3a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM2 2a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/>
-              <path d="M2 5.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1-.5-.5zm0 3a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm3 0a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm3 0a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5zm3 0a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z"/>
-            </svg>
-        </div>
-        <h1 class="display-4 fw-bold text-primary mb-3">Karte antippen</h1>
-        <p class="fs-5 text-muted">Halte deine NFC-Karte an das Terminal, um ein Getränk zu kaufen.</p>
-    </div>
-    {% endif %}
 </div>
 {% endblock %}
 
