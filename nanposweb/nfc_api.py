@@ -236,3 +236,54 @@ def admin_balance() -> Response:
     db.session.commit()
 
     return jsonify({'success': True, 'new_balance': get_balance(user.id)})
+
+
+@nfc_api_bp.route('/debtors', methods=['GET'])
+@nfc_api_bp.route('/most_wanted', methods=['GET'])
+@_require_api_key
+def debtors() -> Response:
+    """Return top debtors (users with negative balance) ordered by most debt.
+
+    Query parameters:
+        limit (optional, default 10): maximum number of debtors to return.
+
+    Response body::
+
+        [{"id": 1, "name": "Alice", "balance": -2500, "debt": 2500}, …]
+
+    ``balance`` and ``debt`` are in **cents**.
+    """
+    limit_param = request.args.get('limit', 10, type=int) or 10
+    limit = max(1, min(limit_param, 100))
+
+    aggregation = (
+        db.select(
+            Revenue.user.label('user_id'),
+            db.func.sum(Revenue.amount).label('balance'),
+        )
+        .group_by(Revenue.user)
+        .subquery()
+    )
+
+    user_query = (
+        db.select(
+            User.id,
+            User.name,
+            db.func.coalesce(aggregation.c.balance, 0).label('balance'),
+        )
+        .outerjoin(aggregation, User.id == aggregation.c.user_id)
+        .filter(db.func.coalesce(aggregation.c.balance, 0) < 0)
+        .order_by(db.asc('balance'), User.name.asc())
+        .limit(limit)
+    )
+
+    debtors_list = db.session.execute(user_query).all()
+    return jsonify([
+        {
+            'id': row.id,
+            'name': row.name,
+            'balance': int(row.balance),
+            'debt': int(-row.balance),
+        }
+        for row in debtors_list
+    ])

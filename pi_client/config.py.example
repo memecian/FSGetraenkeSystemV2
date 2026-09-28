@@ -18,11 +18,21 @@ PORT = 8080
 # Pre-defined top-up amounts shown as quick buttons in the admin panel (euros)
 TOPUP_AMOUNTS = [10, 20, 30, 50]
 
-# List of calendars to display on the idle screen (as a slideshow)
-# Supported keys: 'url' (HTTP or file path to .ics), 'color' (CSS color or bootstrap class)
+# List of calendars to display on the idle screen
+# Supported keys:
+#   'url': HTTP(S) URL or local file path to an .ics file
+#   'name': Display name of the calendar (e.g. 'Fachschaft', 'Partys')
+#   'color': CSS color hex code or name (e.g. '#0d6efd', '#198754', '#dc3545', '#fd7e14')
 CALENDARS = [
-    # {'url': 'https://example.com/kalender.ics', 'color': '#0d6efd', 'name': 'Verein'}
+    # {'url': 'https://example.com/kalender.ics', 'color': '#0d6efd', 'name': 'Fachschaft'},
+    # {'url': 'https://example.com/events.ics', 'color': '#fd7e14', 'name': 'Events'},
 ]
+
+# Maximum number of upcoming calendar events to display on the idle screen
+CALENDAR_EVENT_LIMIT = 8
+
+# Number of debtors shown in the Most Wanted list on the idle screen
+MOST_WANTED_LIMIT = 10
 
 # ---- Display behaviour (Hardware) --------------------------------------
 

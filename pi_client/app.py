@@ -37,7 +37,7 @@ import importlib.util
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Union
 
 import requests
@@ -66,6 +66,10 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     # Pre-defined top-up amounts shown as quick buttons in the admin panel (euros)
     'TOPUP_AMOUNTS': [10, 20, 30, 50],
     'CALENDARS': [],
+    'CALENDAR_EVENT_LIMIT': 8,
+    'CALENDAR_POLL_INTERVAL': 900,  # 15 minutes
+    'MOST_WANTED_LIMIT': 10,
+    'MOST_WANTED_POLL_INTERVAL': 60,  # 60 seconds
     'PIR_PIN': 17,
     'DISPLAY_TIMEOUT': 120,
 }
@@ -85,7 +89,8 @@ _state: dict[str, Any] = {
     'favorites': [],      # [product_id, …]
     'products': [],       # [{id, name, price}, …]  (fetched once, cached)
     'users': [],          # [{id, name, balance}, …]  (admin only)
-    'upcoming_events': [],# [{title, start, end, color, name}, …]
+    'upcoming_events': [],# [{title, start, end, color, name, ...}, …]
+    'most_wanted': [],    # [{id, name, balance, debt}, …]
     'message': '',
     'last_activity': time.monotonic(),
     '_version': 0,        # incremented on every state change for polling
@@ -115,7 +120,7 @@ def _reset_to_idle() -> None:
             'message': '',
             'last_activity': time.monotonic(),
         })
-        # Keep upcoming_events unmodified on reset!
+        # Keep upcoming_events and most_wanted unmodified on reset!
         _state['_version'] += 1
 
 
@@ -126,60 +131,143 @@ def _reset_to_idle() -> None:
 def _calendar_worker(config: dict[str, Any]) -> None:
     """Background thread: periodically fetch and parse .ics calendars."""
     import ics
-    
+
     calendars = config.get('CALENDARS', [])
     if not calendars:
         return
-        
+
+    poll_interval = int(config.get('CALENDAR_POLL_INTERVAL', 900))
+    limit = int(config.get('CALENDAR_EVENT_LIMIT', 8))
+    german_weekdays = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
+
     while True:
-        events = []
+        events: list[dict[str, Any]] = []
         now = datetime.now(timezone.utc)
-        
+        today = datetime.now().date()
+        tomorrow = today + timedelta(days=1)
+
         for cal_config in calendars:
             url = cal_config.get('url')
             color = cal_config.get('color', '#0d6efd')
             name = cal_config.get('name', 'Kalender')
-            
+
             if not url:
                 continue
-                
+
             try:
-                if url.startswith('http://') or url.startswith('https://'):
+                if url.startswith(('http://', 'https://')):
                     r = requests.get(url, timeout=10)
                     r.raise_for_status()
                     cal = ics.Calendar(r.text)
                 else:
-                    # assume file path
                     with open(url, 'r', encoding='utf-8') as f:
                         cal = ics.Calendar(f.read())
-                        
+
                 for ev in cal.timeline:
-                    if ev.end > now: # Only upcoming or currently active events
-                        events.append({
-                            'title': ev.name,
-                            'start': ev.begin.datetime,
-                            'end': ev.end.datetime,
-                            'color': color,
-                            'name': name
-                        })
+                    if not getattr(ev, 'begin', None):
+                        continue
+
+                    begin_dt = ev.begin.datetime if hasattr(ev.begin, 'datetime') else ev.begin
+                    end_val = getattr(ev, 'end', None)
+                    end_dt = end_val.datetime if (end_val and hasattr(end_val, 'datetime')) else (end_val or begin_dt)
+
+                    # Timezone-safe comparison to filter past events
+                    cmp_dt = end_dt
+                    if cmp_dt.tzinfo is None:
+                        cmp_dt = cmp_dt.replace(tzinfo=timezone.utc)
+                    if cmp_dt < now:
+                        continue
+
+                    # Convert to local time for display
+                    local_start = begin_dt.astimezone() if begin_dt.tzinfo else begin_dt
+                    local_end = end_dt.astimezone() if end_dt.tzinfo else end_dt
+                    event_date = local_start.date()
+
+                    # German date formatting
+                    weekday_str = german_weekdays[local_start.weekday()]
+                    if event_date == today:
+                        date_str = 'Heute'
+                    elif event_date == tomorrow:
+                        date_str = 'Morgen'
+                    elif event_date.year == today.year:
+                        date_str = f"{weekday_str}, {local_start.strftime('%d.%m.')}"
+                    else:
+                        date_str = f"{weekday_str}, {local_start.strftime('%d.%m.%Y')}"
+
+                    all_day = getattr(ev, 'all_day', False)
+                    if all_day:
+                        time_str = 'Ganztägig'
+                    elif local_end and local_end.date() == event_date and (local_end != local_start):
+                        time_str = f"{local_start.strftime('%H:%M')} – {local_end.strftime('%H:%M')} Uhr"
+                    else:
+                        time_str = f"{local_start.strftime('%H:%M')} Uhr"
+
+                    events.append({
+                        'title': ev.name or 'Termin',
+                        'start': local_start,
+                        'end': local_end,
+                        'color': color,
+                        'name': name,
+                        'calendar_name': name,
+                        'all_day': all_day,
+                        'location': getattr(ev, 'location', '') or '',
+                        'date_str': date_str,
+                        'time_str': time_str,
+                    })
             except Exception as e:
                 logger.warning('Failed to load calendar %s: %s', url, e)
-                
-        # Sort by start time, take next 10 events
+
+        # Sort by start time and take configured limit
         events.sort(key=lambda x: x['start'])
-        upcoming = events[:10]
-        
+        upcoming = events[:limit]
+
         with _state_lock:
             old_events = _state.get('upcoming_events', [])
             _state['upcoming_events'] = upcoming
-            
+
             # If the events changed and we are on the idle screen, bump the version
-            # so the frontend reloads and picks up the new calendar slides.
+            # so the frontend reloads and picks up the new calendar events.
             if old_events != upcoming and _state['mode'] == 'idle':
                 _state['_version'] += 1
-                
-        # Wait 15 minutes before checking again
-        time.sleep(15 * 60)
+
+        time.sleep(poll_interval)
+
+
+def _debtors_worker(client: NFCApiClient, config: dict[str, Any]) -> None:
+    """Background thread: periodically fetch top debtors / most wanted list."""
+    poll_interval = float(config.get('MOST_WANTED_POLL_INTERVAL', 60))
+    limit = int(config.get('MOST_WANTED_LIMIT', 10))
+
+    while True:
+        try:
+            debtors = client.get_debtors(limit=limit)
+            with _state_lock:
+                old_debtors = _state.get('most_wanted', [])
+                _state['most_wanted'] = debtors
+                if old_debtors != debtors and _state['mode'] == 'idle':
+                    _state['_version'] += 1
+        except Exception as exc:
+            logger.warning('Failed to refresh debtors: %s', exc)
+
+        time.sleep(poll_interval)
+
+
+def _refresh_debtors_async() -> None:
+    """Trigger an immediate asynchronous update of the Most Wanted debtor list."""
+    def _run() -> None:
+        if _api_client is None:
+            return
+        try:
+            limit = int(_config.get('MOST_WANTED_LIMIT', 10))
+            debtors = _api_client.get_debtors(limit=limit)
+            with _state_lock:
+                _state['most_wanted'] = debtors
+                if _state['mode'] == 'idle':
+                    _state['_version'] += 1
+        except Exception as exc:
+            logger.warning('Async debtors refresh failed: %s', exc)
+
+    threading.Thread(target=_run, daemon=True, name='debtors-refresh').start()
 
 
 def _nfc_worker(reader: NFCReader, client: NFCApiClient, config: dict[str, Any], display_manager: Any = None) -> None:
@@ -295,6 +383,37 @@ _config: dict[str, Any] = {}
 _api_client: Optional[NFCApiClient] = None
 
 
+_bg_threads_started = False
+_bg_threads_lock = threading.Lock()
+
+
+def _ensure_background_workers(client: NFCApiClient, cfg: dict[str, Any]) -> None:
+    global _bg_threads_started
+    with _bg_threads_lock:
+        if _bg_threads_started:
+            return
+        _bg_threads_started = True
+
+        if cfg.get('CALENDARS'):
+            cal_thread = threading.Thread(
+                target=_calendar_worker,
+                args=(cfg,),
+                daemon=True,
+                name='cal-worker',
+            )
+            cal_thread.start()
+            logger.info('Calendar worker thread started')
+
+        debtors_thread = threading.Thread(
+            target=_debtors_worker,
+            args=(client, cfg),
+            daemon=True,
+            name='debtors-worker',
+        )
+        debtors_thread.start()
+        logger.info('Debtors worker thread started')
+
+
 @app.before_request
 def _lazy_init() -> None:
     """Initialise config and client on first request (avoids circular init)."""
@@ -302,6 +421,7 @@ def _lazy_init() -> None:
     if _api_client is None:
         _config = _read_config()
         _api_client = NFCApiClient(_config['SERVER_URL'], _config['API_KEY'])
+        _ensure_background_workers(_api_client, _config)
 
 
 # ---------------------------------------------------------------------------
@@ -328,9 +448,16 @@ def index() -> Union[str, Response]:
     with _state_lock:
         mode = _state['mode']
         upcoming_events = _state.get('upcoming_events', [])
+        most_wanted = _state.get('most_wanted', [])
 
     if mode == 'idle':
-        return render_template('idle.html', upcoming_events=upcoming_events)
+        calendars = _config.get('CALENDARS', _DEFAULT_CONFIG['CALENDARS'])
+        return render_template(
+            'idle.html',
+            upcoming_events=upcoming_events,
+            most_wanted=most_wanted,
+            calendars=calendars,
+        )
     if mode == 'user':
         with _state_lock:
             ctx = dict(_state)
@@ -387,6 +514,7 @@ def purchase() -> Response:
         f'Neues Guthaben: {_fmt_currency(result["new_balance"])}'
     )
     _set_state(mode='success', message=msg)
+    _refresh_debtors_async()
     return redirect(url_for('index'))
 
 
@@ -428,6 +556,7 @@ def admin_balance() -> Response:
         f'Neues Guthaben: {_fmt_currency(result["new_balance"])}'
     )
     _set_state(mode='success', message=msg)
+    _refresh_debtors_async()
     return redirect(url_for('index'))
 
 
@@ -494,6 +623,15 @@ def main() -> None:
     except APIError as exc:
         logger.warning('Could not pre-fetch products: %s', exc)
 
+    # Warm up Most Wanted / Debtors cache
+    try:
+        debtors = client.get_debtors(limit=int(cfg.get('MOST_WANTED_LIMIT', 10)))
+        with _state_lock:
+            _state['most_wanted'] = debtors
+        logger.info('Loaded %d debtors from server', len(debtors))
+    except APIError as exc:
+        logger.warning('Could not pre-fetch debtors: %s', exc)
+
     # Initialize DisplayManager
     from display import DisplayManager
     display_manager = DisplayManager(cfg.get('PIR_PIN'), int(cfg.get('DISPLAY_TIMEOUT', 120)))
@@ -509,16 +647,8 @@ def main() -> None:
     nfc_thread.start()
     logger.info('NFC worker thread started')
 
-    # Start Calendar worker thread if configured
-    if cfg.get('CALENDARS'):
-        cal_thread = threading.Thread(
-            target=_calendar_worker,
-            args=(cfg,),
-            daemon=True,
-            name='cal-worker',
-        )
-        cal_thread.start()
-        logger.info('Calendar worker thread started')
+    # Start background workers (calendar and debtors)
+    _ensure_background_workers(client, cfg)
 
     # Start Flask (blocks until Ctrl-C)
     app.run(
@@ -533,3 +663,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
