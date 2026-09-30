@@ -119,10 +119,17 @@ class NFCApiClient:
             },
         )  # type: ignore[return-value]
 
-    def get_debtors(self, limit: int = 10) -> list[dict[str, Any]]:
+    def get_debtors(self, limit: int = 5) -> list[dict[str, Any]]:
         """Return the top debtors (users with negative balance): ``[{id, name, balance, debt}, …]``.
 
         ``balance`` and ``debt`` are in cents.
         """
         return self._get('/api/nfc/debtors', limit=limit)  # type: ignore[return-value]
+
+    def get_rich_bitches(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Return the top savers (users with positive balance): ``[{id, name, balance}, …]``.
+
+        ``balance`` is in cents.
+        """
+        return self._get('/api/nfc/rich_bitches', limit=limit)  # type: ignore[return-value]
 

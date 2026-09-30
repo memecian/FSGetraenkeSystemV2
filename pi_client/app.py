@@ -68,7 +68,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     'CALENDARS': [],
     'CALENDAR_EVENT_LIMIT': 8,
     'CALENDAR_POLL_INTERVAL': 900,  # 15 minutes
-    'MOST_WANTED_LIMIT': 10,
+    'MOST_WANTED_LIMIT': 5,
     'MOST_WANTED_POLL_INTERVAL': 60,  # 60 seconds
     'PIR_PIN': 17,
     'DISPLAY_TIMEOUT': 120,
@@ -91,6 +91,7 @@ _state: dict[str, Any] = {
     'users': [],          # [{id, name, balance}, …]  (admin only)
     'upcoming_events': [],# [{title, start, end, color, name, ...}, …]
     'most_wanted': [],    # [{id, name, balance, debt}, …]
+    'rich_bitches': [],   # [{id, name, balance}, …]
     'message': '',
     'last_activity': time.monotonic(),
     '_version': 0,        # incremented on every state change for polling
@@ -241,13 +242,16 @@ def _debtors_worker(client: NFCApiClient, config: dict[str, Any]) -> None:
     while True:
         try:
             debtors = client.get_debtors(limit=limit)
+            rich = client.get_rich_bitches(limit=limit)
             with _state_lock:
                 old_debtors = _state.get('most_wanted', [])
+                old_rich = _state.get('rich_bitches', [])
                 _state['most_wanted'] = debtors
-                if old_debtors != debtors and _state['mode'] == 'idle':
+                _state['rich_bitches'] = rich
+                if (old_debtors != debtors or old_rich != rich) and _state['mode'] == 'idle':
                     _state['_version'] += 1
         except Exception as exc:
-            logger.warning('Failed to refresh debtors: %s', exc)
+            logger.warning('Failed to refresh debtors/rich_bitches: %s', exc)
 
         time.sleep(poll_interval)
 
@@ -258,14 +262,16 @@ def _refresh_debtors_async() -> None:
         if _api_client is None:
             return
         try:
-            limit = int(_config.get('MOST_WANTED_LIMIT', 10))
+            limit = int(_config.get('MOST_WANTED_LIMIT', 5))
             debtors = _api_client.get_debtors(limit=limit)
+            rich = _api_client.get_rich_bitches(limit=limit)
             with _state_lock:
                 _state['most_wanted'] = debtors
+                _state['rich_bitches'] = rich
                 if _state['mode'] == 'idle':
                     _state['_version'] += 1
         except Exception as exc:
-            logger.warning('Async debtors refresh failed: %s', exc)
+            logger.warning('Async debtors/rich_bitches refresh failed: %s', exc)
 
     threading.Thread(target=_run, daemon=True, name='debtors-refresh').start()
 
@@ -449,6 +455,7 @@ def index() -> Union[str, Response]:
         mode = _state['mode']
         upcoming_events = _state.get('upcoming_events', [])
         most_wanted = _state.get('most_wanted', [])
+        rich_bitches = _state.get('rich_bitches', [])
 
     if mode == 'idle':
         calendars = _config.get('CALENDARS', _DEFAULT_CONFIG['CALENDARS'])
@@ -456,6 +463,7 @@ def index() -> Union[str, Response]:
             'idle.html',
             upcoming_events=upcoming_events,
             most_wanted=most_wanted,
+            rich_bitches=rich_bitches,
             calendars=calendars,
         )
     if mode == 'user':
@@ -625,12 +633,15 @@ def main() -> None:
 
     # Warm up Most Wanted / Debtors cache
     try:
-        debtors = client.get_debtors(limit=int(cfg.get('MOST_WANTED_LIMIT', 10)))
+        limit = int(cfg.get('MOST_WANTED_LIMIT', 5))
+        debtors = client.get_debtors(limit=limit)
+        rich = client.get_rich_bitches(limit=limit)
         with _state_lock:
             _state['most_wanted'] = debtors
-        logger.info('Loaded %d debtors from server', len(debtors))
+            _state['rich_bitches'] = rich
+        logger.info('Loaded %d debtors and %d rich bitches from server', len(debtors), len(rich))
     except APIError as exc:
-        logger.warning('Could not pre-fetch debtors: %s', exc)
+        logger.warning('Could not pre-fetch debtors/rich bitches: %s', exc)
 
     # Initialize DisplayManager
     from display import DisplayManager

@@ -287,3 +287,51 @@ def debtors() -> Response:
         }
         for row in debtors_list
     ])
+
+@nfc_api_bp.route('/rich_bitches', methods=['GET'])
+@_require_api_key
+def rich_bitches() -> Response:
+    """Return top savers (users with positive balance) ordered by most balance.
+
+    Query parameters:
+        limit (optional, default 5): maximum number of users to return.
+
+    Response body::
+
+        [{"id": 1, "name": "Alice", "balance": 2500}, …]
+
+    ``balance`` is in **cents**.
+    """
+    limit_param = request.args.get('limit', 5, type=int) or 5
+    limit = max(1, min(limit_param, 100))
+
+    aggregation = (
+        db.select(
+            Revenue.user.label('user_id'),
+            db.func.sum(Revenue.amount).label('balance'),
+        )
+        .group_by(Revenue.user)
+        .subquery()
+    )
+
+    user_query = (
+        db.select(
+            User.id,
+            User.name,
+            db.func.coalesce(aggregation.c.balance, 0).label('balance'),
+        )
+        .outerjoin(aggregation, User.id == aggregation.c.user_id)
+        .filter(db.func.coalesce(aggregation.c.balance, 0) > 0)
+        .order_by(db.desc('balance'), User.name.asc())
+        .limit(limit)
+    )
+
+    savers_list = db.session.execute(user_query).all()
+    return jsonify([
+        {
+            'id': row.id,
+            'name': row.name,
+            'balance': int(row.balance),
+        }
+        for row in savers_list
+    ])
