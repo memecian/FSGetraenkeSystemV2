@@ -7,6 +7,7 @@ from wtforms.validators import InputRequired
 
 from .db import db
 from .db.helpers import revenue_query
+from .db.models import User
 from .forms import CardForm, PinForm
 from .helpers import calc_hash, check_hash
 
@@ -78,7 +79,14 @@ def card() -> Union[Response, str]:
                 if not form.card_number.data:
                     flash('Card number has no value', category='danger')
                     return render_template('account/change_card.html', form=form)
-                current_user.card = calc_hash(form.card_number.data)
+                card_hash = calc_hash(form.card_number.data)
+                existing_user = db.session.execute(
+                    db.select(User).where(User.card == card_hash, User.id != current_user.id)
+                ).scalars().first()
+                if existing_user is not None:
+                    flash('This card is already registered to another user', category='danger')
+                    return render_template('account/change_card.html', form=form)
+                current_user.card = card_hash
                 flash('Changed Card', category='success')
 
             db.session.commit()
