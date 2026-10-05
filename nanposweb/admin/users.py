@@ -2,6 +2,7 @@ from typing import Union
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 from werkzeug.wrappers import Response
 
 from .forms import BalanceForm, UserForm
@@ -71,10 +72,17 @@ def post() -> Union[Response, str]:
 
     if create:
         db.session.add(user)
+
+    try:
         db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash('Could not save user: name or card is already registered to another user', category='danger')
+        return render_template('users/form.html', form=form, edit=not create)
+
+    if create:
         flash(f'Created user {form.name.data}', category='success')
     else:
-        db.session.commit()
         flash(f'Updated user "{form.name.data}"', category='success')
 
     return redirect(url_for('admin.users.index'))

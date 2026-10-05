@@ -9,7 +9,7 @@ class User(db.Model, UserMixin):  # type: ignore # until https://github.com/pyth
     __tablename__ = 'users'
     id = db.Column('id', db.Integer, primary_key=True)
     name = db.Column('name', db.VARCHAR(200), nullable=False, unique=True)
-    card = db.Column('card', db.VARCHAR(500))
+    card = db.Column('card', db.VARCHAR(500), unique=True)
     isop = db.Column('isop', db.Boolean, server_default=db.false(), nullable=False)
     pin = db.Column('pin', db.VARCHAR(500))
 

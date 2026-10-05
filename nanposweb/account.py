@@ -2,6 +2,7 @@ from typing import Union
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 from werkzeug.wrappers import Response
 from wtforms.validators import InputRequired
 
@@ -74,7 +75,7 @@ def card() -> Union[Response, str]:
         if form.validate_on_submit():
             if form.unset_card.data:
                 current_user.card = None
-                flash('Unset Card', category='success')
+                success_message = 'Unset Card'
             else:
                 if not form.card_number.data:
                     flash('Card number has no value', category='danger')
@@ -87,9 +88,16 @@ def card() -> Union[Response, str]:
                     flash('This card is already registered to another user', category='danger')
                     return render_template('account/change_card.html', form=form)
                 current_user.card = card_hash
-                flash('Changed Card', category='success')
+                success_message = 'Changed Card'
 
-            db.session.commit()
+            try:
+                db.session.commit()
+            except IntegrityError:
+                db.session.rollback()
+                flash('This card is already registered to another user', category='danger')
+                return render_template('account/change_card.html', form=form)
+
+            flash(success_message, category='success')
             return redirect(url_for('main.index'))
 
         flash('Submitted form was not valid!', category='danger')
